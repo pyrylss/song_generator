@@ -4,6 +4,7 @@ from torch.nn import functional as F
 import string
 import re
 import os
+from torch.optim.lr_scheduler import StepLR
 
 # hyperparameters
 n_features = 512
@@ -152,6 +153,7 @@ model = SongGenerator()
 m = model.to(device)
 
 optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
+scheduler = StepLR(optimizer, step_size=1000, gamma=0.5)
 
 for iter in range(max_iters):
 
@@ -168,6 +170,7 @@ for iter in range(max_iters):
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
+    scheduler.step()
 
 
 # generate from the model

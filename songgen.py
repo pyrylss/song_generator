@@ -6,17 +6,18 @@ import re
 import os
 
 # hyperparameters
-n_features = 64
-n_heads = 16
+n_features = 512
+n_heads = 8
 n_layers = 6
 dropout=0.2
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-block_size = 128
-batch_size = 32
+block_size = 200
+batch_size = 24
 learning_rate = 1e-3
 eval_interval = 100
-max_iters = 101
+max_iters = 10000
 eval_iters = 50
+temperature = 1.0
 
 dir_path = 'lyrics/'
     
@@ -34,13 +35,13 @@ translator = str.maketrans('', '', punctuation)
 text = re.sub(r'\(.*?\)', '', text)
 text = text.translate(translator)
 text = re.sub(r'\[.*?\]', '', text)
-words = list(set(re.split(r' |\n', text)))
+words = list(set(text.split()))
 vocab_size = len(words)
 
 stoi = {w:i for i,w in enumerate(words)} # mapping from words to integers
 itos = {i:w for i,w in enumerate(words)} # mapping from integers to words
-encode = lambda s: [stoi[c] for c in re.split(r' |\n', s)] # take a string, output a list of integers
-decode = lambda l: ' '.join(itos[i] for i in l).replace(' \n ', '\n') # take a list of integers, output a string
+encode = lambda s: [stoi[c] for c in s.split()] # take a string, output a list of integers
+decode = lambda l: ' '.join(itos[i] for i in l) # take a list of integers, output a string
 
 data = torch.tensor(encode(text), dtype=torch.long)
 
@@ -127,7 +128,7 @@ class SongGenerator(nn.Module):
             loss = F.cross_entropy(logits, targets)
         return logits, loss
     
-    def generate(self, idx, max_new_tokens):
+    def generate(self, idx, max_new_tokens, temperature=temperature):
         # idx is (B, T) array of indices in the current context
         for _ in range(max_new_tokens):
             # crop idx to the last block_size tokens
@@ -137,6 +138,7 @@ class SongGenerator(nn.Module):
             # focus only on the last time step
             logits = logits[:, -1, :] # becomes (B, C)
             # apply softmax to get probabilities
+            logits = logits/temperature
             probs = F.softmax(logits, dim=-1) # (B, C)
             # sample from the distribution
             idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
@@ -165,15 +167,6 @@ for iter in range(max_iters):
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
-
-with open('eminem.txt', 'r', encoding='utf-8') as f:
-    text_e = f.read().lower()
-
-text_e = re.sub(r'\(.*?\)', '', text)
-text_e = text.translate(translator)
-words_e = list(set(text_e.split()))
-vocab_size_e = len(words_e)
-
 
 
 # generate from the model

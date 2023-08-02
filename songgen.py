@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 import string
 import re
+import os
 
 # hyperparameters
 n_features = 64
@@ -17,21 +18,29 @@ eval_interval = 100
 max_iters = 101
 eval_iters = 50
 
+dir_path = 'lyrics/'
+    
+text = ''
 
-with open('eminem.txt', 'r', encoding='utf-8') as f:
-    text = f.read().lower()
+# os.listdir(dir_path) returns a list of filenames in the directory
+for filename in os.listdir(dir_path):
+    # Check if the file is a .txt file
+    if filename.endswith('.txt'):
+        with open(os.path.join(dir_path, filename), 'r', encoding='utf-8') as f:
+            text += f.read().lower() + '\n'
 
 punctuation = string.punctuation.replace("'", "")
 translator = str.maketrans('', '', punctuation)
 text = re.sub(r'\(.*?\)', '', text)
 text = text.translate(translator)
-words = list(set(text.split()))
+text = re.sub(r'\[.*?\]', '', text)
+words = list(set(re.split(r' |\n', text)))
 vocab_size = len(words)
 
 stoi = {w:i for i,w in enumerate(words)} # mapping from words to integers
 itos = {i:w for i,w in enumerate(words)} # mapping from integers to words
-encode = lambda s: [stoi[c] for c in s.split()] # take a string, output a list of integers
-decode = lambda l: ' '.join(itos[i] for i in l) # take a list of integers, output a string
+encode = lambda s: [stoi[c] for c in re.split(r' |\n', s)] # take a string, output a list of integers
+decode = lambda l: ' '.join(itos[i] for i in l).replace(' \n ', '\n') # take a list of integers, output a string
 
 data = torch.tensor(encode(text), dtype=torch.long)
 
@@ -156,6 +165,16 @@ for iter in range(max_iters):
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
+
+with open('eminem.txt', 'r', encoding='utf-8') as f:
+    text_e = f.read().lower()
+
+text_e = re.sub(r'\(.*?\)', '', text)
+text_e = text.translate(translator)
+words_e = list(set(text_e.split()))
+vocab_size_e = len(words_e)
+
+
 
 # generate from the model
 context = torch.zeros((1, 1), dtype=torch.long, device=device)

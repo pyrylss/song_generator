@@ -76,13 +76,14 @@ class Block(nn.Module):
     
     def __init__(self, n_features, n_heads):
         super().__init__()
-        self.mha = nn.MultiheadAttention(n_features, n_heads)
+        self.mha = nn.MultiheadAttention(n_features, n_heads, dropout=dropout)
         self.ln1 = nn.LayerNorm(n_features)
         
         self.ff = nn.Sequential(
             nn.Linear(n_features, 4 * n_features),
             nn.ReLU(),
             nn.Linear(4 * n_features, n_features),
+            nn.Dropout(dropout),
         )
         self.ln2 = nn.LayerNorm(n_features)
         

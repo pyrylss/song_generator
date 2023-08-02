@@ -5,17 +5,21 @@ import string
 import re
 
 # hyperparameters
-n_features = 18
-n_heads = 6
-n_layers = 2
+n_features = 64
+n_heads = 16
+n_layers = 6
 dropout=0.2
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-block_size = 8
-batch_size = 4
-max_new_tokens = 2
+block_size = 128
+batch_size = 32
+learning_rate = 1e-3
+eval_interval = 100
+max_iters = 101
+eval_iters = 50
+
 
 with open('eminem.txt', 'r', encoding='utf-8') as f:
-    text = f.read()
+    text = f.read().lower()
 
 punctuation = string.punctuation.replace("'", "")
 translator = str.maketrans('', '', punctuation)
@@ -41,9 +45,22 @@ def get_batch(split):
     ix = torch.randint(len(data)-block_size, (batch_size,))
     x = torch.stack([data[i:i+block_size] for i in ix])
     y = torch.stack([data[i+1:i+block_size+1] for i in ix])
+    x, y = x.to(device), y.to(device)
     return x, y
 
-xb, yb = get_batch('train')
+@torch.no_grad()
+def estimate_loss():
+    out = {}
+    model.eval()
+    for split in ['train', 'val']:
+        losses = torch.zeros(eval_iters)
+        for k in range(eval_iters):
+            X, Y = get_batch(split)
+            logits, loss = model(X, Y)
+            losses[k] = loss.item()
+        out[split] = losses.mean()
+    model.train()
+    return out
 
 class Block(nn.Module):
     
@@ -69,7 +86,7 @@ class Block(nn.Module):
 
 class SongGenerator(nn.Module):
 
-    def __init__(self, vocab_size):
+    def __init__(self):
         super().__init__()
         # each token directly reads off the logits for the next token from a lookup table
         self.embedding = nn.Embedding(vocab_size, n_features)
@@ -104,15 +121,42 @@ class SongGenerator(nn.Module):
     def generate(self, idx, max_new_tokens):
         # idx is (B, T) array of indices in the current context
         for _ in range(max_new_tokens):
+            # crop idx to the last block_size tokens
+            idx_cond = idx[:, -block_size:]
             # get the predictions
-            logits, loss = self(idx)
+            logits, loss = self(idx_cond)
             # focus only on the last time step
             logits = logits[:, -1, :] # becomes (B, C)
             # apply softmax to get probabilities
             probs = F.softmax(logits, dim=-1) # (B, C)
             # sample from the distribution
             idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
-            #append sampled index to the running sequence
+            # append sampled index to the running sequence
             idx = torch.cat((idx, idx_next), dim=1) # (B, T+1)
         return idx
 
+
+model = SongGenerator()
+m = model.to(device)
+
+optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
+
+for iter in range(max_iters):
+
+    # every once in a while evaluate the loss on train and val sets
+    if iter % eval_interval == 0:
+        losses = estimate_loss()
+        print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+
+    # sample a batch of data
+    xb, yb = get_batch('train')
+
+    # evaluate the loss
+    logits, loss = m(xb, yb)
+    optimizer.zero_grad(set_to_none=True)
+    loss.backward()
+    optimizer.step()
+
+# generate from the model
+context = torch.zeros((1, 1), dtype=torch.long, device=device)
+print(decode(m.generate(context, max_new_tokens=100)[0].tolist()))

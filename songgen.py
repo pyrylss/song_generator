@@ -7,17 +7,17 @@ import os
 from torch.optim.lr_scheduler import StepLR
 
 # hyperparameters
-n_features = 512
-n_heads = 8
+n_features = 348
+n_heads = 6
 n_layers = 6
-dropout=0.2
+dropout = 0.2
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-block_size = 200
-batch_size = 24
+block_size = 256 # what is the maximum context length for predictions?
+batch_size = 64 # how many independent sequences will we process in parallel?
 learning_rate = 1e-3
-eval_interval = 100
-max_iters = 10000
-eval_iters = 50
+eval_interval = 500
+max_iters = 5000
+eval_iters = 200
 temperature = 1.0
 
 dir_path = 'lyrics/'
@@ -31,18 +31,21 @@ for filename in os.listdir(dir_path):
         with open(os.path.join(dir_path, filename), 'r', encoding='utf-8') as f:
             text += f.read().lower() + '\n'
 
-punctuation = string.punctuation.replace("'", "")
-translator = str.maketrans('', '', punctuation)
-text = re.sub(r'\(.*?\)', '', text)
-text = text.translate(translator)
-text = re.sub(r'\[.*?\]', '', text)
-words = list(set(text.split()))
-vocab_size = len(words)
+#punctuation = string.punctuation.replace("'", "")
+#translator = str.maketrans('', '', punctuation)
+#text = re.sub(r'\(.*?\)', '', text)
+#text = text.translate(translator)
+#text = re.sub(r'\[.*?\]', '', text)
+#words = list(set(text.split()))
+#words = list(set(text.replace('\n', ' \n ').split()))
+#vocab_size = len(words)
+chars = sorted(list(set(text)))
+vocab_size = len(chars)
 
-stoi = {w:i for i,w in enumerate(words)} # mapping from words to integers
-itos = {i:w for i,w in enumerate(words)} # mapping from integers to words
-encode = lambda s: [stoi[c] for c in s.split()] # take a string, output a list of integers
-decode = lambda l: ' '.join(itos[i] for i in l) # take a list of integers, output a string
+stoi = {w:i for i,w in enumerate(chars)} # mapping from words to integers
+itos = {i:w for i,w in enumerate(chars)} # mapping from integers to words
+encode = lambda s: [stoi[c] for c in s] # take a string, output a list of integers
+decode = lambda l: ''.join(itos[i] for i in l) # take a list of integers, output a string
 
 data = torch.tensor(encode(text), dtype=torch.long)
 
@@ -72,6 +75,7 @@ def estimate_loss():
         out[split] = losses.mean()
     model.train()
     return out
+    
 
 class Block(nn.Module):
     
@@ -89,10 +93,10 @@ class Block(nn.Module):
         self.ln2 = nn.LayerNorm(n_features)
         
     def forward(self, x):
-        x = x.permute(1, 0, 2)  # permute to match (seq_len, batch_size, embedding_dim)
+        #x = x.permute(1, 0, 2)  # permute to match (seq_len, batch_size, embedding_dim)
         attn_output, _ = self.mha(self.ln1(x), self.ln1(x), self.ln1(x))  # attn_output has the same shape as x
         x = x + attn_output
-        x = x.permute(1, 0, 2)  # permute back to (batch_size, seq_len, embedding_dim)
+        #x = x.permute(1, 0, 2)  # permute back to (batch_size, seq_len, embedding_dim)
         x = x + self.ff(self.ln2(x))
         return x  
 
@@ -153,10 +157,9 @@ model = SongGenerator()
 m = model.to(device)
 
 optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
-scheduler = StepLR(optimizer, step_size=1000, gamma=0.5)
+scheduler = StepLR(optimizer, step_size=2000, gamma=0.5)
 
 for iter in range(max_iters):
-
     # every once in a while evaluate the loss on train and val sets
     if iter % eval_interval == 0:
         losses = estimate_loss()
@@ -172,7 +175,6 @@ for iter in range(max_iters):
     optimizer.step()
     scheduler.step()
 
-
 # generate from the model
 context = torch.zeros((1, 1), dtype=torch.long, device=device)
-print(decode(m.generate(context, max_new_tokens=100)[0].tolist()))
+print(decode(m.generate(context, max_new_tokens=500)[0].tolist()))

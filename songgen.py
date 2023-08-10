@@ -83,6 +83,9 @@ class Block(nn.Module):
         super().__init__()
         self.mha = nn.MultiheadAttention(n_features, n_heads, dropout=dropout)
         self.ln1 = nn.LayerNorm(n_features)
+
+        self.drop1 = nn.Dropout(dropout)
+        self.drop2 = nn.Dropout(dropout)
         
         self.ff = nn.Sequential(
             nn.Linear(n_features, 4 * n_features),
@@ -95,9 +98,9 @@ class Block(nn.Module):
     def forward(self, x):
         #x = x.permute(1, 0, 2)  # permute to match (seq_len, batch_size, embedding_dim)
         attn_output, _ = self.mha(self.ln1(x), self.ln1(x), self.ln1(x))  # attn_output has the same shape as x
-        x = x + attn_output
+        x = self.drop1(x) + attn_output
         #x = x.permute(1, 0, 2)  # permute back to (batch_size, seq_len, embedding_dim)
-        x = x + self.ff(self.ln2(x))
+        x = self.drop2(x) + self.ff(self.ln2(x))
         return x  
 
 class SongGenerator(nn.Module):
@@ -112,17 +115,20 @@ class SongGenerator(nn.Module):
         self.ln_f = nn.LayerNorm(n_features) # final layer norm
         self.lm_head = nn.Linear(n_features, vocab_size)
 
+        self.dropout1 = nn.Dropout(dropout)
+        self.dropout2 = nn.Dropout(dropout)
+
         
     def forward(self, idx, targets=None):
         
         B, T = idx.shape
 
         # idx and targets are both (B,T) tensor of integers
-        tok_emb = self.embedding(idx) # (B,T,C)
+        tok_emb = self.dropout1(self.embedding(idx)) # (B,T,C)
         pos_emb = self.pos_encoding(torch.arange(T, device=device)) # (T, C)
         x = tok_emb + pos_emb # (B,T,C)
         x = self.blocks(x) # (B, T, C)
-        x = self.ln_f(x) # (B, T, C)
+        x = self.dropout2(self.ln_f(x)) # (B, T, C)
         logits = self.lm_head(x) # (B,T,vocab_size)
 
         if targets is None:
@@ -144,7 +150,7 @@ class SongGenerator(nn.Module):
             # focus only on the last time step
             logits = logits[:, -1, :] # becomes (B, C)
             # apply softmax to get probabilities
-            logits = logits/temperature
+            #logits = logits/temperature
             probs = F.softmax(logits, dim=-1) # (B, C)
             # sample from the distribution
             idx_next = torch.multinomial(probs, num_samples=1) # (B, 1)
@@ -157,13 +163,15 @@ model = SongGenerator()
 m = model.to(device)
 
 optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
-scheduler = StepLR(optimizer, step_size=2000, gamma=0.5)
+#scheduler = StepLR(optimizer, step_size=2000, gamma=0.5)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=10, factor=0.5, verbose=True)
 
 for iter in range(max_iters):
     # every once in a while evaluate the loss on train and val sets
     if iter % eval_interval == 0:
         losses = estimate_loss()
         print(f"step {iter}: train loss {losses['train']:.4f}, val loss {losses['val']:.4f}")
+        scheduler.step(losses['val'])
 
     # sample a batch of data
     xb, yb = get_batch('train')
@@ -173,7 +181,7 @@ for iter in range(max_iters):
     optimizer.zero_grad(set_to_none=True)
     loss.backward()
     optimizer.step()
-    scheduler.step()
+    #scheduler.step()
 
 # generate from the model
 context = torch.zeros((1, 1), dtype=torch.long, device=device)

@@ -75,7 +75,11 @@ def estimate_loss():
         out[split] = losses.mean()
     model.train()
     return out
-    
+
+def subsequent_mask(sz):
+    mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1).float()
+    mask = mask.masked_fill(mask[:sz, :sz] == 0, float('-inf'))#.masked_fill(mask == 1, float(0.0))
+    return mask
 
 class Block(nn.Module):
     
@@ -94,10 +98,16 @@ class Block(nn.Module):
             nn.Dropout(dropout),
         )
         self.ln2 = nn.LayerNorm(n_features)
+
+        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+
         
-    def forward(self, x):
+    def forward(self, x, mask=None):
+
+        if mask is not None:
+            mask = mask.to(device)
         #x = x.permute(1, 0, 2)  # permute to match (seq_len, batch_size, embedding_dim)
-        attn_output, _ = self.mha(self.ln1(x), self.ln1(x), self.ln1(x))  # attn_output has the same shape as x
+        attn_output, _ = self.mha(self.ln1(x), self.ln1(x), self.ln1(x), attn_mask=mask)  # attn_output has the same shape as x
         x = self.drop1(x) + attn_output
         #x = x.permute(1, 0, 2)  # permute back to (batch_size, seq_len, embedding_dim)
         x = self.drop2(x) + self.ff(self.ln2(x))
@@ -167,6 +177,7 @@ optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=10, factor=0.5, verbose=True)
 
 for iter in range(max_iters):
+    print("W")
     # every once in a while evaluate the loss on train and val sets
     if iter % eval_interval == 0:
         losses = estimate_loss()

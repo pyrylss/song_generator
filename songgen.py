@@ -77,8 +77,8 @@ def estimate_loss():
     return out
 
 def subsequent_mask(sz):
-    mask = (torch.triu(torch.ones(sz, sz)) == 1).transpose(0, 1).float()
-    mask = mask.masked_fill(mask[:sz, :sz] == 0, float('-inf'))#.masked_fill(mask == 1, float(0.0))
+    mask = (torch.tril(torch.ones(sz, sz)))
+    mask = mask.masked_fill(mask[:sz, :sz] == 0, float('-inf'))
     return mask
 
 class Block(nn.Module):
@@ -99,17 +99,18 @@ class Block(nn.Module):
         )
         self.ln2 = nn.LayerNorm(n_features)
 
-        self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
+        #self.register_buffer('tril', torch.tril(torch.ones(block_size, block_size)))
 
         
     def forward(self, x, mask=None):
 
         if mask is not None:
             mask = mask.to(device)
-        #x = x.permute(1, 0, 2)  # permute to match (seq_len, batch_size, embedding_dim)
-        attn_output, _ = self.mha(self.ln1(x), self.ln1(x), self.ln1(x), attn_mask=mask)  # attn_output has the same shape as x
+        attn_in = x.permute(1, 0, 2) # (B, T, C) --> (T, B, C)
+        attn_output, _ = self.mha(self.ln1(attn_in), self.ln1(attn_in), self.ln1(attn_in), attn_mask=mask)  # attn_output has the same shape as x
+        attn_output = attn_output.permute(1, 0, 2) # (T, B, C) --> (B, T, C)
+
         x = self.drop1(x) + attn_output
-        #x = x.permute(1, 0, 2)  # permute back to (batch_size, seq_len, embedding_dim)
         x = self.drop2(x) + self.ff(self.ln2(x))
         return x  
 
@@ -132,12 +133,16 @@ class SongGenerator(nn.Module):
     def forward(self, idx, targets=None):
         
         B, T = idx.shape
+        mask = subsequent_mask(T).to(device)
 
         # idx and targets are both (B,T) tensor of integers
         tok_emb = self.dropout1(self.embedding(idx)) # (B,T,C)
         pos_emb = self.pos_encoding(torch.arange(T, device=device)) # (T, C)
         x = tok_emb + pos_emb # (B,T,C)
-        x = self.blocks(x) # (B, T, C)
+        #x = self.blocks(x) # (B, T, C)
+        for block in self.blocks:
+            x = block(x, mask=mask)
+        
         x = self.dropout2(self.ln_f(x)) # (B, T, C)
         logits = self.lm_head(x) # (B,T,vocab_size)
 
@@ -177,7 +182,6 @@ optimizer = torch.optim.AdamW(m.parameters(), lr=learning_rate)
 scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, 'min', patience=10, factor=0.5, verbose=True)
 
 for iter in range(max_iters):
-    print("W")
     # every once in a while evaluate the loss on train and val sets
     if iter % eval_interval == 0:
         losses = estimate_loss()

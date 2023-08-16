@@ -1,59 +1,17 @@
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-import string
-import re
-import os
-from torch.optim.lr_scheduler import StepLR
-
-# hyperparameters
-n_features = 348
-n_heads = 6
-n_layers = 6
-dropout = 0.2
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-block_size = 256 # what is the maximum context length for predictions?
-batch_size = 64 # how many independent sequences will we process in parallel?
-learning_rate = 3e-4
-eval_interval = 500
-max_iters = 20000
-eval_iters = 200
-temperature = 1.0
-
-dir_path = 'lyrics/'
-    
-text = ''
-
-# os.listdir(dir_path) returns a list of filenames in the directory
-for filename in os.listdir(dir_path):
-    # Check if the file is a .txt file
-    if filename.endswith('.txt'):
-        with open(os.path.join(dir_path, filename), 'r', encoding='utf-8') as f:
-            text += f.read().lower()
-
-chars = sorted(list(set(text)))
-vocab_size = len(chars)
-
-stoi = {w:i for i,w in enumerate(chars)} # mapping from characters to integers
-itos = {i:w for i,w in enumerate(chars)} # mapping from integers to characters
-encode = lambda s: [stoi[c] for c in s] # take a string, output a list of integers
-decode = lambda l: ''.join(itos[i] for i in l) # take a list of integers, output a string
-
-data = torch.tensor(encode(text), dtype=torch.long)
-
-n = int(0.9*len(data))
-train_data = data[:n]
-val_data = data[n:]
+from config import *
+from dataclasses import dataclass
 
 def subsequent_mask(sz):
     mask = (torch.tril(torch.ones(sz, sz)))
     mask = mask.masked_fill(mask[:sz, :sz] == 0, float('-inf'))
     return mask
 
-
 class Block(nn.Module):
     
-    def __init__(self, n_features, n_heads):
+    def __init__(self, n_features, n_heads, dropout, device):
         super().__init__()
         self.mha = nn.MultiheadAttention(n_features, n_heads, dropout=dropout)
         self.ln1 = nn.LayerNorm(n_features)
@@ -79,17 +37,17 @@ class Block(nn.Module):
 
         x = self.drop1(x) + attn_output
         x = self.drop2(x) + self.ff(self.ln2(x))
-        return x  
+        return x
 
 class SongGenerator(nn.Module):
 
-    def __init__(self):
+    def __init__(self, vocab_size, n_features, block_size, n_layers, n_heads, dropout, device):
         super().__init__()
         # each token directly reads off the logits for the next token from a lookup table
         self.embedding = nn.Embedding(vocab_size, n_features)
         
         self.pos_encoding = nn.Embedding(block_size, n_features)
-        self.blocks = nn.Sequential(*[Block(n_features, n_heads) for _ in range(n_layers)])
+        self.blocks = nn.Sequential(*[Block(n_features, n_heads, dropout, device) for _ in range(n_layers)])
         self.ln_f = nn.LayerNorm(n_features) # final layer norm
         self.lm_head = nn.Linear(n_features, vocab_size)
 
@@ -139,4 +97,3 @@ class SongGenerator(nn.Module):
             # append sampled index to the running sequence
             idx = torch.cat((idx, idx_next.T), dim=1) # (B, T+1)
         return idx
-
